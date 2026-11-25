@@ -15,7 +15,7 @@ How it works
      * the jump must hold for CONFIRM_FRAMES frames (a one-frame jitter is ignored),
        staying at least CONFIRM_FRAC of the old drop's height above its old bottom,
      * short detection drop-outs are ignored (up to MAX_MISSING_S),
-     * at least MIN_GAP_S seconds between two counted drops (max 150 dpm).
+     * at least MIN_GAP_S seconds between two counted drops (up to ~400 dpm, so free flow is not hidden).
 3. Rate: dpm = 60 / median of the last 8 intervals between drops.
    ml/h = dpm * 60 / drop_factor. Fewer than 3 drops → status "no_drops".
 
@@ -37,7 +37,7 @@ WEIGHTS = Path(__file__).with_name("drops.pt")
 CONF = 0.4              # chosen on val: recall 0.985 with 1 of 35 empty frames falsely detected
 IMGSZ = 640
 MAX_SECONDS = 30        # only the first 30 s are analysed
-MIN_GAP_S = 0.4         # design parameter: at most 150 dpm (> 200 dpm is free flow and shows no separate drops)
+MIN_GAP_S = 0.15        # design parameter: up to ~400 dpm, so a very fast drip (free flow > 200 dpm) is not hidden
 RESET_FRAC = 0.5        # the bottom edge must jump up by more than half the old drop's height
 CONFIRM_FRAC = 0.25     # ...and stay at least a quarter of that height above the old bottom (the new drop grows fast)
 MIN_DROP_FRAMES = 3     # the old drop must have been seen this many frames
@@ -176,6 +176,10 @@ PEAK_K = 8.0                # a spike must exceed median + PEAK_K * MAD of the s
 PEAK_REL = 0.35             # ...and PEAK_REL of the strongest spikes...
 PEAK_MIN_RATIO = 6.0        # ...and PEAK_MIN_RATIO times the median (real drops ~12x, noise ~5x on test videos)...
 PEAK_MIN_ABS = 4.0          # ...and at least 4 grey levels of mean change (noise peaked at ~2)
+GAP_FRAC = 0.5             # minimum gap between drops = GAP_FRAC x the drip period estimated from the signal
+GAP_MIN_S, GAP_MAX_S = 0.08, 1.0   # bounds for that gap (0.08 s allows up to ~700 dpm, so free flow is not hidden)
+RHYTHM_MIN = 0.35          # trust the drip rhythm (autocorrelation peak) only above this strength
+RHYTHM_COUNT_FRAC = 0.5    # ...and only if the spike count is below this fraction of what the rhythm implies
 PROBE_FRAMES = 20           # frames sampled from the first 2 s to decide between YOLO and motion
 PROBE_MIN_RATE = 0.5        # YOLO is used if it sees the drop in at least half of the probe frames
 
@@ -199,15 +203,39 @@ def _read_gray(video_path, max_seconds, width=MOTION_WIDTH):
     return frames, fps
 
 
-def _locate_tip(frames, fps):
-    """Spot whose frame-to-frame change is the most spiky: p99 / median of the change, smoothed."""
+def _locate_tip(frames, fps, n_candidates=10):
+    """Find the drip tip: among the spots whose frame-to-frame change is the most spiky (p99 / median),
+    pick the one whose change is the most periodic. Drops fall at a steady rhythm, while sharp edges that
+    move with the camera (a clamp, a hook against a lamp) are spiky but irregular."""
     import cv2, numpy as np
     n = min(len(frames), int(LOCATE_SECONDS * fps))
     D = np.stack([cv2.blur(np.abs(frames[i] - frames[i - 1]), (5, 5)) for i in range(1, n)])
     score = np.percentile(D, 99, axis=0) / (np.median(D, axis=0) + 1.0)
     score = cv2.GaussianBlur(score, (0, 0), 3)
-    y, x = np.unravel_index(np.argmax(score), score.shape)
-    return int(x), int(y), float(score.max())
+    H, W = score.shape
+    sep = max(6, int(0.05 * W))
+    order = np.argsort(score.ravel())[::-1]
+    cands = []
+    for idx in order:
+        y, x = divmod(int(idx), W)
+        if all(abs(x - a) > sep or abs(y - b) > sep for a, b in cands):
+            cands.append((x, y))
+        if len(cands) == n_candidates or score[y, x] < 0.3 * score.max():
+            break
+    best, best_val = cands[0], -1.0
+    for x, y in cands:
+        sig = D[:, y, x]
+        x0 = np.clip(sig - np.median(sig), 0, None); x0 = x0 - x0.mean()
+        if x0.std() == 0:
+            continue
+        ac = np.correlate(x0, x0, "full")[len(x0) - 1:]; ac = ac / ac[0]
+        lo, hi = max(2, int(0.08 * fps)), min(len(ac) - 1, int(4.0 * fps))
+        rhythm = float(ac[lo:hi].max()) if hi > lo else 0.0         # strength of the best repeating period
+        val = rhythm * np.sqrt(score[y, x] / score.max())
+        if val > best_val:
+            best, best_val = (x, y), val
+    x, y = best
+    return int(x), int(y), float(score[y, x])
 
 
 def _track(frames, x, y):
@@ -252,7 +280,36 @@ def _smooth_path(offs, med_win=15, mean_win=9):
     return [tuple(r) for r in out]
 
 
-def motion_events(video_path, max_seconds=MAX_SECONDS, min_gap_s=MIN_GAP_S):
+def _rhythm_strength(sig, fps, period):
+    import numpy as np
+    x = np.clip(sig - np.median(sig), 0, None); x = x - x.mean()
+    if not period or x.std() == 0:
+        return 0.0
+    ac = np.correlate(x, x, "full")[len(x) - 1:]; ac = ac / ac[0]
+    k = int(round(period * fps))
+    return float(ac[max(1, k - 1):k + 2].max())
+
+
+def _drip_period(sig, fps, lo_s=0.08, hi_s=4.0):
+    """Dominant period of the change signal (autocorrelation), or None if there is no clear rhythm."""
+    import numpy as np
+    x = np.clip(sig - np.median(sig), 0, None)
+    if x.std() == 0 or len(x) < 3 * lo_s * fps:
+        return None
+    x = x - x.mean()
+    ac = np.correlate(x, x, "full")[len(x) - 1:]
+    ac = ac / ac[0]
+    lo, hi = max(1, int(lo_s * fps)), min(len(ac) - 1, int(hi_s * fps))
+    if hi <= lo:
+        return None
+    # first clear peak (local maximum above 0.2) is the period; later peaks are its multiples
+    for k in range(lo + 1, hi):
+        if ac[k] > 0.2 and ac[k] >= ac[k - 1] and ac[k] >= ac[k + 1]:
+            return k / fps
+    return None
+
+
+def motion_events(video_path, max_seconds=MAX_SECONDS, min_gap_s=None):
     """→ (events, info). Count drops from sharp changes in a window at the drip tip."""
     import cv2, numpy as np
     frames, fps = _read_gray(video_path, max_seconds)
@@ -267,6 +324,9 @@ def motion_events(video_path, max_seconds=MAX_SECONDS, min_gap_s=MIN_GAP_S):
     med = np.median(sig); mad = np.median(np.abs(sig - med)) + 1e-6
     top = np.sort(sig)[-max(3, len(sig) // 100):].mean()
     thr = max(med + PEAK_K * mad, PEAK_REL * top, PEAK_MIN_RATIO * med, PEAK_MIN_ABS)
+    period = _drip_period(sig, fps)
+    if min_gap_s is None:   # adaptive: half the drip period, so fast drips (free flow) are not capped
+        min_gap_s = min(max(GAP_FRAC * period, GAP_MIN_S), GAP_MAX_S) if period else MIN_GAP_S
     events, last = [], -1e9
     for i in range(1, len(sig) - 1):
         if sig[i] >= thr and sig[i] >= sig[i - 1] and sig[i] >= sig[i + 1]:
@@ -275,8 +335,19 @@ def motion_events(video_path, max_seconds=MAX_SECONDS, min_gap_s=MIN_GAP_S):
                 events.append(t); last = t
             elif events and sig[i] > sig[int(round(last * fps))]:   # keep the stronger spike of a close pair
                 events[-1] = t; last = t
+    # Rhythm check: spike counting can miss drops when the tip is partly hidden (e.g. the spot found is the
+    # air bubbles rising in the bottle, which follow the drops). If the rhythm is strong and the count is far
+    # below what it implies, the rate comes from the rhythm instead (needed so a very fast drip is not hidden).
+    strength = _rhythm_strength(sig, fps, period)
+    rate_source = "spikes"
+    duration = len(sig) / fps
+    if period and strength >= RHYTHM_MIN and len(events) < RHYTHM_COUNT_FRAC * duration / period:
+        events = [i * period for i in range(int(duration / period))]
+        rate_source = "rhythm"
     info = {"fps": fps, "frames": len(frames), "tip_xy": (round(x / W, 3), round(y / H, 3)),
+            "rhythm_strength": round(strength, 2), "rate_source": rate_source,
             "peakiness": round(peakiness, 1), "threshold": round(float(thr), 2),
+            "period_s": round(period, 3) if period else None, "min_gap_s": round(min_gap_s, 3),
             "signal": [(i / fps, float(v)) for i, v in enumerate(sig)]}
     return events, info
 
@@ -314,12 +385,14 @@ def measure_rate(video_path, drop_factor=20, debug=False, method="auto", **kw):
 
     if method == "motion":
         events, info = motion_events(video_path, max_seconds=kw.get("max_seconds", MAX_SECONDS),
-                                     min_gap_s=kw.get("min_gap_s", MIN_GAP_S))
+                                     min_gap_s=kw.get("min_gap_s"))
         out = rate_from_events(events, drop_factor)
         if debug:
             out.update(method="motion", yolo_probe=probe, events=[round(t, 3) for t in events],
                        fps=info["fps"], frames=info["frames"], detection_rate=None,
                        tip_xy=info.get("tip_xy"), threshold=info.get("threshold"),
+                       period_s=info.get("period_s"), min_gap_s=info.get("min_gap_s"),
+                       rhythm_strength=info.get("rhythm_strength"), rate_source=info.get("rate_source"),
                        motion_signal=info.get("signal", []))
         return out
 
