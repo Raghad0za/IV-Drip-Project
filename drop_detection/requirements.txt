@@ -1,0 +1,4 @@
+ultralytics==8.4.218
+opencv-python
+numpy
+matplotlib
