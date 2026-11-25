@@ -2,17 +2,20 @@
 
 Part of **IV-Drip-Project**: this folder (`bag_label/`) handles the IV bag itself.
 
-Checks a photo of an IV / saline bag for two things:
+Checks a photo of an IV / saline bag for:
 
-1. **Fluid level:** full · half · almost empty · empty
-2. **Drug label:** reads the Arabic/English label and checks it against the prescribed drug
+1. **Fluid level:** full · half · almost empty · empty (segmentation model)
+2. **Drug label:** reads the Arabic/English label and checks it against the prescribed drug (OCR)
+3. **Remaining volume (estimate):** fill level × bag size read from the label, e.g. half of 500 mL ≈ 250 mL
 
 ```python
 from iv_monitor import analyze
 
 analyze("bag.jpg", "Normal Saline 0.9%")
 # {'level': {'level': 'full', 'level_ar': 'مليان', 'fill_ratio': 0.72},
-#  'label': {'text': 'Normal Saline 0.9% محلول ملحي ...', 'match': True, 'score': 100, 'matched_name': 'Normal Saline 0.9%'}}
+#  'label': {'text': 'Normal Saline 0.9% محلول ملحي 500 mL ...', 'match': True, 'score': 100,
+#            'matched_name': 'Normal Saline 0.9%', 'volume_ml': 500},
+#  'remaining_ml': 500}
 ```
 
 ---
@@ -38,10 +41,10 @@ pip install -r requirements.txt
 Every function takes `image` as **a file path** or **an OpenCV image** (BGR numpy array, e.g. a webcam frame).
 
 ### `analyze(image, drug_prescribed=None)` → dict
-Runs both checks. If `drug_prescribed` is not given, the label check is skipped (`"label": None`).
+Runs both checks and estimates the mL left. If `drug_prescribed` is not given, the label check is skipped (`"label": None`), and so is the mL estimate (`"remaining_ml": None`), because the bag size comes from the label.
 
 ```python
-{"level": <bag_level result>, "label": <check_label result or None>}
+{"level": <bag_level result>, "label": <check_label result or None>, "remaining_ml": 250 or None}
 ```
 
 ### `bag_level(image)` → dict
@@ -59,6 +62,7 @@ Runs both checks. If `drug_prescribed` is not given, the label check is skipped 
 | `match` | bool | **The answer.** `True` = the label is the prescribed drug |
 | `score` | int 0–100 | How closely the name matched (≥ `threshold` is required) |
 | `matched_name` | str or None | The spelling that matched (English or Arabic) |
+| `volume_ml` | int or None | Bag size read from the label (`500 mL` → 500). Only standard sizes count; `None` if not readable |
 | `text` | str | All the text OCR read, useful for logs and debugging |
 
 `drug_prescribed` can be English or Arabic (`"Paracetamol"` or `"باراسيتامول"`).
@@ -119,8 +123,10 @@ python iv_monitor.py bag.jpg "Normal Saline 0.9%"
 | `LEVELS` | 0.65 / 0.40 / 0.10 | Fill-ratio limits for full / half / almost empty |
 | `MATCH_THRESHOLD` | 80 | Minimum name score for a label match |
 | `MODEL_PATH` | `best.pt` next to the script | The YOLO model file |
+| `FULL_FILL` | 0.72 | fill_ratio of a completely full bag, used for the mL estimate |
+| `BAG_SIZES` | 50 … 2000 | Standard bag sizes in mL that the label reader accepts |
 
-The drug list (English ↔ Arabic) is in `drugs.py`. Add a drug there and you can prescribe it in either language.
+The drug list (English ↔ Arabic) is in `drugs.py`, together with `SYNONYMS`: other names for the same drug as printed on real labels (Normal Saline = Sodium Chloride, Dextrose = Glucose). A prescription in any of these names matches a label showing any other.
 
 ## 5. How it works
 
@@ -132,16 +138,18 @@ The drug list (English ↔ Arabic) is in `drugs.py`. Add a drug there and you ca
 Only the strongest fluid detection is used, plus the strongest air detection in the same column, so stray detections on walls or hair are ignored. A full bag still has air in its neck, so it reads about 0.72, not 1.0.
 
 **Label.**
-1. EasyOCR reads all Arabic and English text.
-2. Both texts are normalized: lowercase, no Arabic diacritics, أ/إ/آ → ا, ى → ي, ة → ه.
-3. The name scores a match if it appears as written (`partial_ratio`) **or** if every word appears in any order. Both tolerate OCR typos.
-4. **Safety rule:** numbers in the prescription (`5%`, `0.9%`) must appear on the label, so `Dextrose 5%` never matches a `Dextrose 10%` bag.
+1. EasyOCR reads the image twice: an English-only pass and an Arabic pass. A single mixed reader corrupts English words with Arabic letters (`Dextrose` → `D٥»I0$0`).
+2. Both texts are normalized: lowercase, Arabic digits → 0–9 (`٥` → `5`), decimal comma → dot (`0,9` → `0.9`), no Arabic diacritics, أ/إ/آ → ا, ى → ي, ة → ه.
+3. Every name of the prescribed drug is tried: English, Arabic and synonyms.
+4. The name scores a match if it appears as written (`partial_ratio`) **or** if every word appears in any order. Both tolerate OCR typos.
+5. **Safety rule:** numbers in the prescription (`5%`, `0.9%`) must appear on the label, so `Dextrose 5%` never matches a `Dextrose 10%` bag.
 
 ## 6. Testing
 
 ```bash
 python make_synthetic_labels.py    # prints drug labels on the photos in test_bags/ -> synthetic_labels/
-python evaluate_ocr.py             # checks every image with the right drug and with a wrong drug
+python evaluate_ocr.py             # each image: right drug, wrong drug, and bag size (mL)
+python show_ocr.py                 # saves real_labels/ with OCR boxes + result drawn -> ocr_results/
 ```
 
 Results:
@@ -149,24 +157,36 @@ Results:
 | Test | Result |
 |---|---|
 | Level, 10 test/val photos | 3 full, 5 half, 2 almost empty; all match what the photos show |
-| Label, correct drug matched | 24 / 25 |
-| Label, wrong drug rejected | **25 / 25** |
+| Label, synthetic (25 images): correct drug matched | 24 / 25 |
+| Label, synthetic: wrong drug rejected | **25 / 25** |
+| Label, **real** bag labels (5 images): correct drug matched | 4 / 5 |
+| Label, real: wrong drug rejected | **5 / 5** |
 
-The one miss was a very blurry label where OCR read `0.9%` as `0 9%`, so the safety rule refused to confirm it. A wrong drug was never accepted.
+Run the real-label test with `python evaluate_ocr.py --folder real_labels`.
+
+Misses:
+- Synthetic: a very blurry label where OCR read `0.9%` as `0 9%`, so the safety rule refused to confirm it.
+- Real: an Egyptian Glucose 5% bottle with red stylized print, where OCR read `Glucose` as `Glucozo` (score 71, threshold 80).
+
+A wrong drug was never accepted.
+
+**Remaining volume.** `remaining_ml = min(fill_ratio ÷ 0.72, 1) × bag size`. A full bag reads ~0.72 because the neck holds air.
+It is an estimate from the image area, not a measurement. The bag size was read correctly on 23/25 synthetic and 2/5 real labels
+(on the other 3 the "mL" print is tiny or vertical), and never read as a wrong size: when unsure it returns `None`.
 
 ## 7. Files
 
 | File | Purpose |
 |---|---|
 | `iv_monitor.py` | **The module to import:** `analyze`, `bag_level`, `check_label` |
-| `drugs.py` | Drug names, English ↔ Arabic |
+| `drugs.py` | Drug names, English ↔ Arabic, plus synonyms |
 | `best.pt` | YOLOv8m-seg model |
 | `requirements.txt` | Dependencies |
-| `make_synthetic_labels.py`, `evaluate_ocr.py` | Testing only, not needed in production |
-| `test_bags/`, `synthetic_labels/` | Test images |
+| `make_synthetic_labels.py`, `evaluate_ocr.py`, `show_ocr.py` | Testing only, not needed in production. `show_ocr.py` saves each test image with the OCR boxes and result drawn on it, to `ocr_results/` |
+| `test_bags/`, `synthetic_labels/`, `real_labels/` | Test images (each label folder has a `labels.csv` with the correct drug) |
 
 ## 8. Limitations
 - Tested on 10 photos of one bottle type; tune `LEVELS` for other bags or camera angles.
 - No empty bag was in the test photos, so the "empty" level is untested.
-- Labels were synthetic (printed by the test script); real pharmacy labels may need a lower `MATCH_THRESHOLD` or a sharper close-up photo.
+- Only 5 real labels tested so far. Stylized print on a curved bottle is the weak spot: `Glucose` read as `Glucozo` (score 71) and the Arabic text on that label wasn't readable.
 - OCR needs the label in focus and reasonably large in the image. A wide room shot won't be readable.
