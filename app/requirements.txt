@@ -1,0 +1,8 @@
+streamlit>=1.45
+opencv-python-headless
+numpy
+matplotlib
+# Jana (drop_detection) + Hasan (bag_label)
+ultralytics
+easyocr
+rapidfuzz
