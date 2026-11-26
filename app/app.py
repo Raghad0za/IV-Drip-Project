@@ -44,7 +44,7 @@ html, body, .stApp, button, input, textarea, select, p, span, div, label, h1, h2
 [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none; }
 /* Streamlit's top bar sits over the page: same colour as the page, content starts below it */
 [data-testid="stHeader"] { background: var(--page); }
-.block-container { padding-top: 3.6rem !important; padding-bottom: 3rem; max-width: 1240px; }
+.block-container { padding: 3.6rem 2.2rem 3rem !important; max-width: 1240px; }
 [data-testid="stMain"] h2 { font-size: 28px !important; font-weight: 700; letter-spacing: 0; margin: 0 !important;
   padding: 0 !important; line-height: 1.25; color: var(--ink); }
 [data-testid="stMain"] h4 { font-size: 15px !important; font-weight: 700; color: var(--ink-2); padding: 0 0 4px !important; }
@@ -52,6 +52,17 @@ html, body, .stApp, button, input, textarea, select, p, span, div, label, h1, h2
 .num, .big, .metric .v, .side-sum b { font-variant-numeric: tabular-nums; }
 /* ---------- sidebar: the nurse station panel ---------- */
 [data-testid="stSidebar"] { background: var(--navy); }
+/* the station panel is always shown: Streamlit hides it when it was closed before, on some screen
+   sizes or versions, so it is forced open and the open/close buttons are removed */
+@media (min-width: 640px) {
+  [data-testid="stSidebar"] { transform: none !important; width: 300px !important; min-width: 300px !important;
+    max-width: 300px !important; visibility: visible !important; display: flex !important; }
+  @media (max-width: 1300px) {      /* iPad and small laptops: a narrower panel leaves room for 3 bed cards */
+    [data-testid="stSidebar"] { width: 250px !important; min-width: 250px !important; max-width: 250px !important; }
+  }
+  [data-testid="stSidebarCollapseButton"], [data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"],
+  [data-testid="stSidebarResizeHandle"] { display: none !important; }
+}
 [data-testid="stSidebar"] * { color: #FFFFFF !important; }
 [data-testid="stSidebar"] h3 { font-size: 20px !important; font-weight: 700; padding-bottom: 0 !important; }
 [data-testid="stSidebar"] [data-testid="stCaptionContainer"] { opacity: .7; }
