@@ -29,6 +29,7 @@ for p in (DROP_DIR, BAG_DIR):
         sys.path.append(str(p))
 
 MAX_SECONDS = float(os.environ.get("IV_MAX_SECONDS", 30))
+MAX_IMAGE_SIDE = 1280   # phone photos (4000 px) are shrunk first: OCR is ~3x faster and reads labels just as well
 
 
 def _try_import(name):
@@ -132,7 +133,17 @@ def run_rate(video_path, drop_factor):
 DEMO_LABEL_TEXT = "Sodium Chloride 0.9% 500 mL IV Infusion"
 
 
+def _shrink(image, side=MAX_IMAGE_SIDE):
+    """Large photo (OpenCV array) -> longest side `side` px. Paths and small images pass through."""
+    if not hasattr(image, "shape") or max(image.shape[:2]) <= side:
+        return image
+    import cv2
+    s = side / max(image.shape[:2])
+    return cv2.resize(image, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+
+
 def run_bag(image):
+    image = _shrink(image)
     if status()["bag"] == "demo":
         return {"level": "half", "level_ar": "نص", "fill_ratio": 0.52, "mode": "demo"}
     out = bag_mod.bag_level(image)
@@ -141,6 +152,7 @@ def run_bag(image):
 
 
 def run_label(image, drug):
+    image = _shrink(image)
     if status()["bag"] == "demo":
         out = _simple_match(DEMO_LABEL_TEXT, drug)
         out.update(text=DEMO_LABEL_TEXT, volume_ml=500, mode="demo")
