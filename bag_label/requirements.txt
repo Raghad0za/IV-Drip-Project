@@ -1,8 +1,0 @@
-ultralytics>=8.1
-easyocr
-rapidfuzz
-opencv-python
-pillow
-numpy
-arabic-reshaper
-python-bidi
