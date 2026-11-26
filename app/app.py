@@ -5,8 +5,7 @@ IV monitoring demo: nurse dashboard (Arabic, RTL).
 
 Board of 6 beds -> open a bed -> upload drip video + bag photo + label photo + prescription
 -> analyse with Jana's measure_rate and Hasan's bag_level / check_label -> result on the board.
-The nurse sees only what she acts on. Charts and raw outputs are behind the sidebar switch
-"وضع العرض التقني" (off by default).
+The nurse sees only what she acts on. Analysis errors are printed in the terminal for the team.
 """
 import copy
 import io
@@ -42,7 +41,10 @@ html, body, .stApp, button, input, textarea, select, p, span, div, label, h1, h2
 [data-testid="stMain"] p, [data-testid="stMain"] h1, [data-testid="stMain"] h2, [data-testid="stMain"] h3,
 [data-testid="stMain"] h4, [data-testid="stMain"] label { text-align: right; }
 [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none; }
-.block-container { padding-top: 1.6rem; max-width: 1280px; }
+/* Streamlit's top bar sits over the page: give it the page colour and start the content below it,
+   so the back button and the title are never cut off */
+[data-testid="stHeader"] { background: #F3F5F8; }
+.block-container { padding-top: 4.5rem !important; max-width: 1280px; }
 h2 { font-size: 26px !important; padding-bottom: 0 !important; }
 h4 { font-size: 16px !important; }
 /* sidebar = dark navy panel of the mockup */
@@ -110,7 +112,6 @@ def init_state():
     st.session_state.screen = "board"
     st.session_state.active = 5
     st.session_state.undo = None
-    st.session_state.last_error = None
 
 
 init_state()
@@ -221,18 +222,6 @@ with st.sidebar:
       <div class="row"><span>أسرّة فاضية</span><b>{counts['free']}</b></div></div>""", unsafe_allow_html=True)
     if demo_models:
         st.caption("⚠️ بعض الموديلات غير متوفرة على هذا الجهاز: التحليل الجديد يعطي قيم تجريبية.")
-    st.markdown("---")
-    tech = st.toggle("وضع العرض التقني", key="tech")
-    if tech:
-        st.caption({"yolo": "✅ القطرات: YOLO (drops.pt) + طريقة الحركة احتياط",
-                    "motion": "⚠️ القطرات: طريقة الحركة (YOLO غير متوفر)",
-                    "demo": "⚠️ القطرات: قيم تجريبية"}[model_status["rate"]])
-        st.caption("✅ الكيس والملصق: الموديل الحقيقي" if model_status["bag"] == "real" else "⚠️ الكيس والملصق: قيم تجريبية")
-        st.caption(f"مدة الفيديو المحلَّلة: أول {backends.MAX_SECONDS:g} ثانية")
-        for part, err in {**model_status["disabled"], "rate.py": model_status["rate_error"],
-                          "iv_monitor.py": model_status["bag_error"]}.items():
-            if err:
-                st.caption(f"{part}: {err}")
 
 
 # --------------------------------------------------------------- board
@@ -341,42 +330,13 @@ def run_analysis(video, bag, label, drug, rx, factor):
     try:
         return backends.analyze_bed(vpath, bag_img, label_img, drug, rx, factor), None
     except FileNotFoundError:
-        S.last_error = traceback.format_exc()
+        traceback.print_exc()
         return None, "ما قدرنا نقرأ الفيديو. جرّبي فيديو MP4."
     except Exception:
-        S.last_error = traceback.format_exc()
         traceback.print_exc()
         return None, "صار خطأ أثناء التحليل. جرّبي مرة ثانية."
     finally:
         Path(vpath).unlink(missing_ok=True)
-
-
-def drop_chart(rate):
-    """Change / drop-edge signal with the counted drops, like rate.plot_debug (technical mode only)."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    if rate.get("method") == "motion" and rate.get("motion_signal"):
-        fig, ax = plt.subplots(figsize=(7, 2.2))
-        sig = rate["motion_signal"]
-        ax.plot([p[0] for p in sig], [p[1] for p in sig], lw=1, color="#2a78d6")
-        if rate.get("threshold") is not None:
-            ax.axhline(rate["threshold"], color="#8a8a85", lw=1, ls="--")
-        ax.set_ylabel("change")
-    elif rate.get("signal"):
-        fig, ax = plt.subplots(figsize=(7, 2.2))
-        pts = [p for p in rate["signal"] if p]
-        ax.plot([p[0] for p in pts], [p[1] for p in pts], ".", ms=3, color="#2a78d6")
-        ax.invert_yaxis()
-        ax.set_ylabel("drop bottom (px)")
-    else:
-        return None
-    for t in rate.get("events", []):
-        ax.axvline(t, color="#e5484d", lw=0.8)
-    ax.set_xlabel("time (s)")
-    ax.set_title(f"{rate.get('drops', 0)} drops · {rate.get('dpm', 0)} dpm · {rate.get('method')}", fontsize=9)
-    fig.tight_layout()
-    return fig
 
 
 def prescription_fields(i):
@@ -445,8 +405,6 @@ def bed_page():
         else:
             result_panel(v)
 
-    if S.get("tech"):
-        tech_panel(i)
 
 
 def result_panel(v):
@@ -469,27 +427,6 @@ def result_panel(v):
         {pill('ok' if v['label_ok'] else 'bad', tag)}</div>
         <div class="v ltr">{v['label_read'] or '—'}</div>
         <div class="muted">الموصوف: <span class="ltr">{v['drug']}</span></div></div>""", unsafe_allow_html=True)
-
-
-def tech_panel(i):
-    """For the evaluator / the team: how the numbers were produced. Hidden from the nurse by default."""
-    data = S.beds[i]["data"]
-    st.markdown("---")
-    st.markdown("#### تفاصيل تقنية")
-    if data:
-        fig = drop_chart(data["rate"])
-        if fig is not None:
-            import matplotlib.pyplot as plt
-            st.pyplot(fig)
-            plt.close(fig)
-            st.caption("كل خط أحمر = قطرة انعدّت.")
-        st.json({"rate": {k: data["rate"].get(k) for k in ("dpm", "ml_h", "drops", "status", "method", "yolo_probe",
-                                                             "detection_rate", "rate_source", "events")},
-                 "bag": data["bag"], "label": data["label"]},
-                expanded=False)
-    if S.last_error:
-        with st.expander("آخر خطأ"):
-            st.code(S.last_error)
 
 
 # --------------------------------------------------------------- router
