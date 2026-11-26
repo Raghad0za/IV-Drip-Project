@@ -5,7 +5,7 @@ Pure logic, no models and no Streamlit, so it can be tested on its own.
 The rules are the same as in the agreed mockup:
 
   status "done"  : no drops and the bag is under 10%            (the infusion finished)
-  status "bad"   : label does not match, rate off by more than 25%, or no drops
+  status "bad"   : label does not match, rate off by more than 25%, no drops, or free flow (> 200 drops/min)
   status "warn"  : rate off by more than 10%, bag almost empty / empty, or less than 1 hour left
   status "ok"    : everything within the prescription
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 FULL_FILL = 0.72          # fill_ratio of a completely full bag (same as iv_monitor.FULL_FILL)
 LEVELS = [(0.65, "full", "مليان"), (0.40, "half", "نص"), (0.10, "almost empty", "قرب يخلص"), (0.0, "empty", "فاضي")]
 WARN_DEV, BAD_DEV = 10, 25  # % deviation from the prescribed rate
+FREE_FLOW_DPM = 200         # above this the drip is free-flowing, whatever was prescribed
 
 TONES = {
     "ok":   {"bg": "#E7F5EC", "fg": "#14653A", "border": "#BFE3CC", "bar": "#1F8A4C", "label": "طبيعي"},
@@ -66,10 +67,13 @@ def evaluate(rate, bag, label, rx_mlh, drug):
     ml_left = remaining_ml(fill, volume)
     share = None if fill is None else min(fill / FULL_FILL, 1.0)
     hours = ml_left / mlh if (ml_left is not None and mlh > 0) else None
+    no_drops = dpm == 0 or rate.get("status") == "no_drops"
+    free_flow = dpm > FREE_FLOW_DPM
+    demo = "demo" in (rate.get("method"), bag.get("mode"), label.get("mode"))
 
     out = {
         "drug": drug, "rx_mlh": rx_mlh, "dpm": round(dpm, 1), "ml_h": round(mlh), "drops": rate.get("drops", 0),
-        "rate_method": rate.get("method"),
+        "rate_method": rate.get("method"), "demo": demo,
         "label_ok": label_ok, "label_score": label.get("score", 0), "label_text": label.get("text", ""),
         "label_read": label.get("matched_name") if label_ok else _short(label.get("text", "")),
         "volume_ml": volume, "fill": fill, "level_en": level_en, "level_ar": level_ar,
@@ -78,7 +82,7 @@ def evaluate(rate, bag, label, rx_mlh, drug):
     }
 
     # finished infusion
-    if dpm == 0 and fill is not None and fill < 0.10:
+    if no_drops and fill is not None and fill < 0.10:
         out.update(status="done", reason="المحلول خلص", dev_pct=None, dev_text="—", dev_status="idle",
                    bag_status="done", time_left="خلص")
         return out
@@ -88,16 +92,18 @@ def evaluate(rate, bag, label, rx_mlh, drug):
     low = level_en in ("almost empty", "empty") or (hours is not None and hours < 1)
     no_bag = fill is None
 
-    if not label_ok or ad > BAD_DEV or dpm == 0:
+    if not label_ok or ad > BAD_DEV or no_drops or free_flow:
         status = "bad"
     elif ad > WARN_DEV or low or no_bag:
         status = "warn"
     else:
         status = "ok"
 
-    if not label_ok:
+    if free_flow:
+        reason = "تدفق حر: أكثر من 200 قطرة/د"
+    elif not label_ok:
         reason = "الملصق لا يطابق الوصفة"
-    elif dpm == 0:
+    elif no_drops:
         reason = "ما فيه قطرات: المحلول متوقف"
     elif ad > BAD_DEV:
         reason = "السرعة منحرفة عن الوصفة"
@@ -113,7 +119,7 @@ def evaluate(rate, bag, label, rx_mlh, drug):
     out.update(
         status=status, reason=reason, dev_pct=round(dev),
         dev_text=("+" if dev >= 0 else "−") + f"{abs(dev):.0f}%",
-        dev_status="bad" if ad > BAD_DEV else "warn" if ad > WARN_DEV else "ok",
+        dev_status="bad" if (ad > BAD_DEV or free_flow) else "warn" if ad > WARN_DEV else "ok",
         bag_status="warn" if (low or no_bag) else "ok",
     )
     return out
