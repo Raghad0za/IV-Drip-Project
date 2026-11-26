@@ -41,12 +41,15 @@ def remaining_ml(fill, volume_ml):
     return round(min(fill / FULL_FILL, 1.0) * volume_ml)
 
 
+APPROX = "\u200e~"   # "~" kept in front of the number in right-to-left text (left-to-right mark first)
+
+
 def format_time_left(hours):
     if hours is None:
         return "—"
     if hours < 1:
-        return f"~{round(hours * 60)} د"
-    return f"~{hours:.1f} س"
+        return f"{APPROX}{round(hours * 60)} د"
+    return f"{APPROX}{hours:.1f} س"
 
 
 def evaluate(rate, bag, label, rx_mlh, drug):

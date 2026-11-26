@@ -85,6 +85,30 @@ def warmup():
     return status()
 
 
+def missing():
+    """What is missing, in plain words: {"rate": [...], "bag": [...]}. Empty lists = everything is real."""
+    out = {"rate": [], "bag": []}
+    if rate_mod is None:
+        out["rate"].append(f"rate.py ما اشتغل ({RATE_ERR})")
+    else:
+        if not (DROP_DIR / "drops.pt").exists():
+            out["rate"].append("ملف drops.pt مو موجود في مجلد drop_detection/")
+        if not _has("ultralytics"):
+            out["rate"].append("مكتبة ultralytics مو منزّلة")
+        if "yolo" in _DISABLED:
+            out["rate"].append(f"drops.pt ما انحمّل ({_DISABLED['yolo']})")
+    if bag_mod is None:
+        out["bag"].append(f"iv_monitor.py ما اشتغل ({BAG_ERR})")
+    if not (BAG_DIR / "best.pt").exists():
+        out["bag"].append("ملف best.pt مو موجود في مجلد bag_label/")
+    for lib in ("ultralytics", "easyocr", "rapidfuzz"):
+        if not _has(lib):
+            out["bag"].append(f"مكتبة {lib} مو منزّلة")
+    if "bag" in _DISABLED:
+        out["bag"].append(f"موديل الكيس أو EasyOCR ما انحمّل ({_DISABLED['bag']})")
+    return out
+
+
 # --------------------------------------------------------------- drip rate (Jana)
 def run_rate(video_path, drop_factor):
     mode = status()["rate"]
@@ -157,3 +181,12 @@ def analyze_bed(video_path, bag_image, label_image, drug, rx_mlh, drop_factor):
     label = run_label(label_image, drug)
     return {"inputs": {"drug": drug, "rx_mlh": rx_mlh, "drop_factor": drop_factor},
             "rate": rate, "bag": bag, "label": label}
+
+
+if __name__ == "__main__":      # python app/backends.py  -> what works and what is missing
+    s = warmup()
+    print("القطرات:", {"yolo": "YOLO (حقيقي)", "motion": "طريقة الحركة (حقيقي، بدون YOLO)", "demo": "قيم تجريبية"}[s["rate"]])
+    print("الكيس والملصق:", "حقيقي" if s["bag"] == "real" else "قيم تجريبية")
+    for part, items in missing().items():
+        for m in items:
+            print(f"  ناقص ({part}): {m}")

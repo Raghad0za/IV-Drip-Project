@@ -19,7 +19,7 @@ import streamlit as st
 from PIL import Image, ImageOps
 
 import backends
-from iv_logic import EXAMPLE_BEDS, TONES, evaluate_saved
+from iv_logic import APPROX, EXAMPLE_BEDS, TONES, evaluate_saved
 
 st.set_page_config(page_title="مراقبة المحلول الوريدي", page_icon="💧", layout="wide",
                    initial_sidebar_state="expanded")
@@ -33,39 +33,57 @@ DEFAULT_RX = {"drug": KNOWN_DRUGS[0], "rx_mlh": 100, "drop_factor": 20}
 CSS = """
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+:root { --ink:#0F1B2D; --ink-2:#4A5868; --line:#E3E8EE; --page:#F2F4F7; --navy:#0E2A3F; --blue:#0A5C8A; }
 html, body, .stApp, button, input, textarea, select, p, span, div, label, h1, h2, h3, h4 {
   font-family: 'IBM Plex Sans Arabic', system-ui, sans-serif; }
-.stApp { background: #F3F5F8; }
+.stApp { background: var(--page); color: var(--ink); }
 /* right-to-left for the content only (the page frame stays as Streamlit expects) */
 [data-testid="stMain"], section.main, [data-testid="stSidebarContent"] { direction: rtl; }
-[data-testid="stMain"] p, [data-testid="stMain"] h1, [data-testid="stMain"] h2, [data-testid="stMain"] h3,
-[data-testid="stMain"] h4, [data-testid="stMain"] label { text-align: right; }
+[data-testid="stMain"] [data-testid="stMarkdownContainer"], [data-testid="stMain"] p, [data-testid="stMain"] h1,
+[data-testid="stMain"] h2, [data-testid="stMain"] h3, [data-testid="stMain"] h4, [data-testid="stMain"] label { text-align: right; }
 [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none; }
-/* Streamlit's top bar sits over the page: give it the page colour and start the content below it,
-   so the back button and the title are never cut off */
-[data-testid="stHeader"] { background: #F3F5F8; }
-.block-container { padding-top: 4.5rem !important; max-width: 1280px; }
-h2 { font-size: 26px !important; padding-bottom: 0 !important; }
-h4 { font-size: 16px !important; }
-/* sidebar = dark navy panel of the mockup */
-[data-testid="stSidebar"] { background: #0E2A3F; }
+/* Streamlit's top bar sits over the page: same colour as the page, content starts below it */
+[data-testid="stHeader"] { background: var(--page); }
+.block-container { padding-top: 3.6rem !important; padding-bottom: 3rem; max-width: 1240px; }
+[data-testid="stMain"] h2 { font-size: 28px !important; font-weight: 700; letter-spacing: 0; margin: 0 !important;
+  padding: 0 !important; line-height: 1.25; color: var(--ink); }
+[data-testid="stMain"] h4 { font-size: 15px !important; font-weight: 700; color: var(--ink-2); padding: 0 0 4px !important; }
+[data-testid="stCaptionContainer"] { color: var(--ink-2); }
+.num, .big, .metric .v, .side-sum b { font-variant-numeric: tabular-nums; }
+/* ---------- sidebar: the nurse station panel ---------- */
+[data-testid="stSidebar"] { background: var(--navy); }
 [data-testid="stSidebar"] * { color: #FFFFFF !important; }
-[data-testid="stSidebar"] button { background: #1D4A6B !important; border: 0 !important; min-height: 48px; }
-/* buttons */
-button[kind="primary"], [data-testid="stBaseButton-primary"] { background: #0A5C8A !important; border-color: #0A5C8A !important; color: #FFFFFF !important; }
-button[kind="primary"]:hover, [data-testid="stBaseButton-primary"]:hover { background: #07466A !important; }
-button[kind="secondary"], [data-testid="stBaseButton-secondary"] { background: #FFFFFF; border: 1px solid #D5DCE4; color: #24476B; }
+[data-testid="stSidebar"] h3 { font-size: 20px !important; font-weight: 700; padding-bottom: 0 !important; }
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] { opacity: .7; }
+[data-testid="stSidebar"] button { background: rgba(255,255,255,.08) !important; border: 1px solid rgba(255,255,255,.14) !important;
+  min-height: 48px; border-radius: 12px !important; }
+[data-testid="stSidebar"] button:hover { background: rgba(255,255,255,.14) !important; }
+.side-sum { border-top: 1px solid rgba(255,255,255,.14); padding: 14px 2px 4px; display:flex; flex-direction:column; gap:12px; font-size:14px; }
+.side-sum .head { font-size: 12px; opacity: .65; }
+.side-sum b { font-size: 16px; }
+.dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-inline-end:9px; vertical-align: 1px; }
+/* ---------- buttons ---------- */
+button[kind="primary"], [data-testid="stBaseButton-primary"] { background: var(--blue) !important; border-color: var(--blue) !important; color: #FFFFFF !important; }
+button[kind="primary"]:hover, [data-testid="stBaseButton-primary"]:hover { background: #07466A !important; border-color: #07466A !important; }
+button[kind="secondary"], [data-testid="stBaseButton-secondary"] { background: #FFFFFF; border: 1px solid #CFD8E2; color: #24476B; }
 .stButton button { border-radius: 10px; min-height: 44px; font-weight: 700; }
-/* bed cards: a bordered container whose key starts with card_<status>_ */
-[class*="st-key-card_"] { background: #FFFFFF; border: 1px solid #E2E7ED !important; border-radius: 18px;
-  padding: 14px 16px 12px; box-shadow: 0 1px 2px rgba(15,27,45,.05), 0 12px 24px -18px rgba(15,27,45,.3); gap: 10px; }
-[class*="st-key-card_ok_"]   { border-top: 5px solid #1F8A4C !important; }
-[class*="st-key-card_warn_"] { border-top: 5px solid #C98A00 !important; }
-[class*="st-key-card_bad_"]  { border-top: 5px solid #C0392B !important; }
-[class*="st-key-card_done_"] { border-top: 5px solid #5B7FA6 !important; background: #FBFCFE; }
-[class*="st-key-empty_"] { background: #F8FAFC; border: 1.5px dashed #9AB3C8 !important; border-radius: 18px; padding: 18px 16px; }
-[class*="st-key-panel_"] { background: #FFFFFF; border: 1px solid #E2E7ED !important; border-radius: 18px; padding: 16px; }
-.card { display:flex; flex-direction:column; gap:10px; padding-bottom:14px; }
+/* discharge on a card is a quiet text action, so "open" is the one clear button */
+[class*="st-key-dis"] button { background: transparent !important; border: 0 !important; color: var(--ink-2) !important; font-weight: 600; }
+[class*="st-key-dis"] button:hover { color: #A11D1D !important; background: #FDEBEA !important; }
+/* ---------- bed cards: status shown by a stripe on the right (where a right-to-left reader starts) ---------- */
+[class*="st-key-card_"] { background: #FFFFFF; border: 1px solid var(--line) !important; border-radius: 16px;
+  padding: 16px 20px 10px 16px; gap: 6px; box-shadow: 0 1px 2px rgba(15,27,45,.04); }
+[class*="st-key-card_ok_"]   { box-shadow: inset -5px 0 0 #1F8A4C, 0 1px 2px rgba(15,27,45,.04); }
+[class*="st-key-card_warn_"] { box-shadow: inset -5px 0 0 #C98A00, 0 1px 2px rgba(15,27,45,.04); }
+[class*="st-key-card_bad_"]  { box-shadow: inset -5px 0 0 #C0392B, 0 6px 18px -10px rgba(192,57,43,.45); border-color: #F3C9C5 !important; }
+[class*="st-key-card_done_"] { box-shadow: inset -5px 0 0 #5B7FA6, 0 1px 2px rgba(15,27,45,.04); }
+[class*="st-key-empty_"] { background: transparent; border: 1.5px dashed #B5C6D6 !important; border-radius: 16px; padding: 18px 16px; }
+[class*="st-key-panel_"] { background: #FFFFFF; border: 1px solid var(--line) !important; border-radius: 16px; padding: 18px 20px; }
+.card { display:flex; flex-direction:column; gap:12px; padding-bottom:12px; }
+.bed { font-size: 18px; font-weight: 700; }
+.big { font-size: 34px; font-weight: 700; line-height: 1; letter-spacing: -.5px; }
+.unit { font-size: 13px; color: var(--ink-2); font-weight: 600; }
+.reason { font-size: 13.5px; font-weight: 700; padding: 8px 12px; border-radius: 10px; }
 /* filter buttons: push to the far left (the end of the row in right-to-left) */
 [data-testid="stColumn"]:has(.st-key-filter) [data-testid="stVerticalBlock"],
 [data-testid="column"]:has(.st-key-filter) [data-testid="stVerticalBlock"] { align-items:flex-end !important; }
@@ -73,20 +91,26 @@ button[kind="secondary"], [data-testid="stBaseButton-secondary"] { background: #
 .st-key-filter > div, .st-key-filter [data-testid="stButtonGroup"] { width:auto !important; margin-inline-start:auto; }
 /* the segmented buttons draw their joined borders for left-to-right; in right-to-left the outer edges get cut */
 .st-key-filter [data-testid="stButtonGroup"], .st-key-filter [role="radiogroup"], .st-key-filter > div > div { direction:ltr; }
+.st-key-filter button { min-height: 40px; padding: 0 16px; font-weight: 600; }
 .row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
-.pill { font-size:12px; font-weight:700; padding:3px 10px; border-radius:999px; white-space:nowrap; }
-.big { font-size:30px; font-weight:700; line-height:1; }
-.muted { font-size:12px; color:#4A5868; }
-.box { background:#F5F7F9; border-radius:12px; padding:9px 12px; display:flex; flex-direction:column; gap:5px; font-size:12px; }
-.track { height:8px; border-radius:999px; background:#E9EDF2; overflow:hidden; }
+.pill { font-size:12px; font-weight:700; padding:3px 10px; border-radius:999px; white-space:nowrap; vertical-align:middle; }
+.muted { font-size:12.5px; color: var(--ink-2); }
+.box { background:#F5F7FA; border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
+.track { height:6px; border-radius:999px; background:#E6EBF0; overflow:hidden; }
 .track div { height:100%; border-radius:999px; }
-.empty { text-align:center; display:flex; flex-direction:column; gap:8px; align-items:center; padding:10px 0 4px; }
-.placeholder { border:1.5px dashed #D5DCE4; border-radius:14px; padding:28px 16px; text-align:center; }
-.banner { border-radius:12px; padding:11px 14px; display:flex; justify-content:space-between; gap:8px; font-weight:700; }
-.metric { background:#FFFFFF; border:1px solid #E2E7ED; border-radius:12px; padding:11px 12px; display:flex; flex-direction:column; gap:4px; }
-.metric .v { font-size:18px; font-weight:700; }
+.empty { text-align:center; display:flex; flex-direction:column; gap:10px; align-items:center; padding:28px 0 12px; }
+.placeholder { border:1.5px dashed #D5DCE4; border-radius:12px; padding:36px 20px; text-align:center; line-height:1.8; }
+.banner { border-radius:12px; padding:14px 16px; display:flex; justify-content:space-between; align-items:center; gap:8px; font-weight:700; font-size:16px; }
+.metrics { display:flex; flex-direction:column; margin-top:6px; }
+.metric { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 2px; border-top:1px solid var(--line); }
+.metric:first-child { border-top:0; }
+.metric .v { font-size:22px; font-weight:700; margin-top:2px; }
+.metric .end { display:flex; flex-direction:column; align-items:flex-end; gap:6px; text-align:left; }
 .ltr { direction:ltr; unicode-bidi:isolate; }
-.side-sum { background:#143650; border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:8px; font-size:14px; }
+/* file pickers: just the button, the file types are enforced anyway */
+[data-testid="stFileUploaderDropzoneInstructions"] { display:none; }
+[data-testid="stFileUploaderDropzone"] { justify-content:center; padding: 8px; background:#F5F7FA; border:1.5px dashed #C9D4DF; min-width:0; }
+[data-testid="stFileUploaderDropzone"] button { width:100%; min-width:0; }
 </style>
 """
 # Markdown ends an HTML block at the first empty line, so the CSS must have none.
@@ -210,18 +234,22 @@ model_status = backends.status()
 demo_models = model_status["rate"] == "demo" or model_status["bag"] == "demo"
 
 with st.sidebar:
-    st.markdown("### 💧 مراقبة المحلول")
+    st.markdown("### مراقبة المحلول")
     st.caption("محطة التمريض")
     st.button(f"لوحة الأسرّة · {alerts} تنبيه" if alerts else "لوحة الأسرّة", on_click=go_board, use_container_width=True)
+    dot = lambda c: f'<span class="dot" style="background:{c}"></span>'
     st.markdown(f"""<div class="side-sum">
-      <div style="opacity:.75;font-size:12px">ملخص الوردية</div>
-      <div class="row"><span>🟢 طبيعي</span><b>{counts['ok']}</b></div>
-      <div class="row"><span>🟡 تنبيه</span><b>{counts['warn']}</b></div>
-      <div class="row"><span>🔴 حرج</span><b>{counts['bad']}</b></div>
-      <div class="row"><span>🔵 انتهى المحلول</span><b>{counts['done']}</b></div>
-      <div class="row"><span>أسرّة فاضية</span><b>{counts['free']}</b></div></div>""", unsafe_allow_html=True)
+      <div class="head">ملخص الوردية</div>
+      <div class="row"><span>{dot(TONES['ok']['bar'])}طبيعي</span><b>{counts['ok']}</b></div>
+      <div class="row"><span>{dot(TONES['warn']['bar'])}تنبيه</span><b>{counts['warn']}</b></div>
+      <div class="row"><span>{dot(TONES['bad']['bar'])}حرج</span><b>{counts['bad']}</b></div>
+      <div class="row"><span>{dot(TONES['done']['bar'])}انتهى المحلول</span><b>{counts['done']}</b></div>
+      <div class="row"><span>{dot('#7F93A8')}أسرّة فاضية</span><b>{counts['free']}</b></div></div>""", unsafe_allow_html=True)
     if demo_models:
-        st.caption("⚠️ بعض الموديلات غير متوفرة على هذا الجهاز: التحليل الجديد يعطي قيم تجريبية.")
+        gaps = backends.missing()
+        why = "، ".join((gaps["rate"] if model_status["rate"] == "demo" else []) +
+                       (gaps["bag"] if model_status["bag"] == "demo" else []))
+        st.caption(f"⚠️ التحليل الجديد يعطي قيم تجريبية. الناقص: {why}")
 
 
 # --------------------------------------------------------------- board
@@ -229,7 +257,7 @@ def render_card(i, v):
     t = TONES[v["status"]]
     pct = v["pct"] if v["pct"] is not None else 0
     bag_t = TONES[v["bag_status"]]
-    ml_line = (f'~{v["ml_left"]} مل من {v["volume_ml"]} · يخلص بعد {v["time_left"]}' if v["ml_left"] is not None
+    ml_line = (f'{APPROX}{v["ml_left"]} مل من {v["volume_ml"]} · يخلص بعد {v["time_left"]}' if v["ml_left"] is not None
                else "حجم الكيس ما انقرأ من الملصق")
     if v["status"] == "done":
         ml_line = "خلص"
@@ -238,20 +266,22 @@ def render_card(i, v):
     with st.container(border=True, key=f"card_{v['status']}_{i}"):
         st.markdown(f"""
 <div class="card">
-  <div class="row"><b style="font-size:17px">سرير {i}{demo}</b>{pill(v['status'])}</div>
+  <div class="row"><span class="bed">سرير {i}{demo}</span>{pill(v['status'])}</div>
   <div class="row" style="align-items:flex-end">
-    <div><span class="big">{v['ml_h']}</span> <span class="muted">مل/س</span>
-      <div class="muted" style="margin-top:5px">{v['dpm']:g} قطرة/د · الموصوف {v['rx_mlh']:g}</div></div>
+    <div><span class="big">{v['ml_h']}</span> <span class="unit">مل/س</span>
+      <div class="muted" style="margin-top:6px">{v['dpm']:g} قطرة/د · الموصوف {v['rx_mlh']:g}</div></div>
     <span class="ltr">{pill(v['dev_status'], v['dev_text'])}</span>
   </div>
   <div class="box">
     <div class="row"><span class="muted">الموصوف</span><b class="ltr">{v['drug']}</b></div>
     <div class="row"><span class="muted">الملصق</span><b class="ltr" style="color:{label_color}">{v['label_read'] or '—'}</b></div>
   </div>
-  <div class="row muted"><span>الكيس · <b style="color:#0F1B2D">{v['level_ar']}</b></span><b style="color:#0F1B2D">{pct}%</b></div>
-  <div class="track"><div style="width:{pct}%;background:{bag_t['bar']}"></div></div>
-  <div class="muted">{ml_line}</div>
-  <div style="font-size:13px;font-weight:600;color:{t['fg']};border-top:1px solid #EEF1F4;padding-top:10px">{v['reason']}</div>
+  <div>
+    <div class="row muted" style="margin-bottom:7px"><span>الكيس · <b style="color:#0F1B2D">{v['level_ar']}</b></span><b class="num" style="color:#0F1B2D">{pct}%</b></div>
+    <div class="track"><div style="width:{pct}%;background:{bag_t['bar']}"></div></div>
+    <div class="muted" style="margin-top:7px">{ml_line}</div>
+  </div>
+  <div class="reason" style="background:{t['bg']};color:{t['fg']}">{v['reason']}</div>
 </div>""", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         c1.button("افتح", key=f"open{i}", on_click=open_bed, args=(i,), use_container_width=True, type="primary")
@@ -353,14 +383,14 @@ def bed_page():
     i = S.active
     v = bed_view(i)
 
-    t1, t2, t3 = st.columns([1, 5, 2], vertical_alignment="center")
+    t1, t2, t3 = st.columns([1.2, 6, 1.6], vertical_alignment="center")
     t1.button("→ رجوع", on_click=go_board, use_container_width=True)
     demo = f" {DEMO_PILL}" if (v and v["demo"]) else ""
     t2.markdown(f"## سرير {i} &nbsp; {pill(v['status'] if v else 'idle')}{demo}", unsafe_allow_html=True)
     if v and t3.button("إخلاء السرير", use_container_width=True):
         confirm_discharge(i)
 
-    left, right = st.columns([1, 1.05], gap="large")
+    left, right = st.columns([1, 1.2], gap="large")
 
     # ---- inputs
     with left:
@@ -412,21 +442,20 @@ def result_panel(v):
     st.markdown(f'<div class="banner" style="background:{head["bg"]};color:{head["fg"]};border:1px solid {head["border"]}">'
                 f'<span>{head["label"]}</span><span style="font-weight:600">{v["reason"]}</span></div>',
                 unsafe_allow_html=True)
-    m1, m2, m3 = st.columns(3)
-    m1.markdown(f"""<div class="metric"><div class="row"><span class="muted">السرعة</span>
-        <span class="ltr">{pill(v['dev_status'], v['dev_text'])}</span></div>
-        <div class="v">{v['ml_h']} مل/س</div>
-        <div class="muted">{v['dpm']:g} قطرة/د · الموصوف {v['rx_mlh']:g}</div></div>""", unsafe_allow_html=True)
-    left_v = f'~{v["ml_left"]} مل' if v["ml_left"] is not None else (f'{v["pct"]}%' if v["pct"] is not None else "—")
-    m2.markdown(f"""<div class="metric"><div class="row"><span class="muted">المتبقي</span>
-        {pill(v['bag_status'], v['level_ar'])}</div>
-        <div class="v">{left_v}</div>
-        <div class="muted">من {v['volume_ml'] or '؟'} مل · يخلص بعد {v['time_left']}</div></div>""", unsafe_allow_html=True)
+    left_v = f'{APPROX}{v["ml_left"]} مل' if v["ml_left"] is not None else (f'{v["pct"]}%' if v["pct"] is not None else "—")
     tag = "مطابق" if v["label_ok"] else "غير مطابق"
-    m3.markdown(f"""<div class="metric"><div class="row"><span class="muted">الملصق</span>
-        {pill('ok' if v['label_ok'] else 'bad', tag)}</div>
-        <div class="v ltr">{v['label_read'] or '—'}</div>
-        <div class="muted">الموصوف: <span class="ltr">{v['drug']}</span></div></div>""", unsafe_allow_html=True)
+    # one row per check: name and value on the right, verdict and detail on the left
+    st.markdown(f"""<div class="metrics">
+      <div class="metric"><div><div class="muted">السرعة</div><div class="v">{v['ml_h']} <span class="unit">مل/س</span></div></div>
+        <div class="end"><span class="ltr">{pill(v['dev_status'], v['dev_text'])}</span>
+        <div class="muted">{v['dpm']:g} قطرة/د · الموصوف {v['rx_mlh']:g}</div></div></div>
+      <div class="metric"><div><div class="muted">المتبقي</div><div class="v">{left_v}</div></div>
+        <div class="end">{pill(v['bag_status'], v['level_ar'])}
+        <div class="muted">من {v['volume_ml'] or '؟'} مل · يخلص بعد {v['time_left']}</div></div></div>
+      <div class="metric"><div><div class="muted">الملصق</div><div class="v ltr">{v['label_read'] or '—'}</div></div>
+        <div class="end">{pill('ok' if v['label_ok'] else 'bad', tag)}
+        <div class="muted">الموصوف: <span class="ltr">{v['drug']}</span></div></div></div>
+    </div>""", unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------- router

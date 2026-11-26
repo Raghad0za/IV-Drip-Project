@@ -10,6 +10,10 @@ gatherUsageStats = false
 
 [theme]
 base = "light"                # the dashboard colours are designed for a light page
+primaryColor = "#0A5C8A"      # selected filter, focus rings, number steppers: the dashboard blue, not Streamlit red
+backgroundColor = "#F2F4F7"
+secondaryBackgroundColor = "#F5F7FA"
+textColor = "#0F1B2D"
 
 [client]
 toolbarMode = "minimal"
