@@ -21,7 +21,10 @@ from PIL import Image, ImageOps
 import backends
 from iv_logic import APPROX, EXAMPLE_BEDS, TONES, evaluate_saved
 
-st.set_page_config(page_title="مراقبة المحلول الوريدي", page_icon="💧", layout="wide",
+APP_NAME = "Clepsy"
+NURSE = {"name": "نورة الحربي", "initial": "ن", "role": "ممرضة · وردية الصباح"}   # signed-in account (demo)
+
+st.set_page_config(page_title=APP_NAME, layout="wide",
                    initial_sidebar_state="expanded")
 
 BED_IDS = [1, 2, 3, 4, 5, 6]
@@ -41,7 +44,10 @@ html, body, .stApp, button, input, textarea, select, p, span, div, label, h1, h2
 [data-testid="stMain"], section.main, [data-testid="stSidebarContent"] { direction: rtl; }
 [data-testid="stMain"] [data-testid="stMarkdownContainer"], [data-testid="stMain"] p, [data-testid="stMain"] h1,
 [data-testid="stMain"] h2, [data-testid="stMain"] h3, [data-testid="stMain"] h4, [data-testid="stMain"] label { text-align: right; }
-[data-testid="stToolbar"], [data-testid="stDecoration"] { display: none; }
+/* hide Streamlit's own menu, but keep its toolbar: the button that reopens the side panel lives there */
+[data-testid="stToolbarActions"], [data-testid="stMainMenu"], [data-testid="stAppDeployButton"], [data-testid="stDecoration"] { display: none; }
+[data-testid="stExpandSidebarButton"] { background: var(--navy); border-radius: 10px; color: #FFFFFF; }
+[data-testid="stExpandSidebarButton"] * { color: #FFFFFF !important; }
 /* Streamlit's top bar sits over the page: same colour as the page, content starts below it */
 [data-testid="stHeader"] { background: var(--page); }
 .block-container { padding: 3.6rem 2.2rem 3rem !important; max-width: 1240px; }
@@ -52,19 +58,18 @@ html, body, .stApp, button, input, textarea, select, p, span, div, label, h1, h2
 .num, .big, .metric .v, .side-sum b { font-variant-numeric: tabular-nums; }
 /* ---------- sidebar: the nurse station panel ---------- */
 [data-testid="stSidebar"] { background: var(--navy); }
-/* the station panel is always shown: Streamlit hides it when it was closed before, on some screen
-   sizes or versions, so it is forced open and the open/close buttons are removed */
-@media (min-width: 640px) {
-  [data-testid="stSidebar"] { transform: none !important; width: 300px !important; min-width: 300px !important;
-    max-width: 300px !important; visibility: visible !important; display: flex !important; }
-  @media (max-width: 1300px) {      /* iPad and small laptops: a narrower panel leaves room for 3 bed cards */
-    [data-testid="stSidebar"] { width: 250px !important; min-width: 250px !important; max-width: 250px !important; }
-  }
-  [data-testid="stSidebarCollapseButton"], [data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"],
-  [data-testid="stSidebarResizeHandle"] { display: none !important; }
-}
 [data-testid="stSidebar"] * { color: #FFFFFF !important; }
-[data-testid="stSidebar"] h3 { font-size: 20px !important; font-weight: 700; padding-bottom: 0 !important; }
+.brand { font-size: 26px; font-weight: 700; letter-spacing: .3px; direction: ltr; text-align: right; line-height: 1.1; }
+.brand-sub { font-size: 12.5px; opacity: .65; margin: 4px 0 14px; }
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] { background: var(--blue) !important; border-color: var(--blue) !important; }
+[data-testid="stSidebar"] .stButton button { justify-content: flex-start; padding-inline: 16px; }
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"]:has(> .st-key-account) { min-height: calc(100vh - 6.5rem); }
+.st-key-account { margin-top: auto; }
+.account { display:flex; align-items:center; gap:12px; border-top: 1px solid rgba(255,255,255,.14); padding-top: 16px; }
+.avatar { width:40px; height:40px; border-radius:50%; background:#1D4A6B; display:flex; align-items:center; justify-content:center;
+  font-weight:700; font-size:17px; flex-shrink:0; }
+.account .who { font-weight:700; font-size:14px; }
+.account .role { font-size:12px; opacity:.65; margin-top:2px; }
 [data-testid="stSidebar"] [data-testid="stCaptionContainer"] { opacity: .7; }
 [data-testid="stSidebar"] button { background: rgba(255,255,255,.08) !important; border: 1px solid rgba(255,255,255,.14) !important;
   min-height: 48px; border-radius: 12px !important; }
@@ -164,8 +169,9 @@ def open_bed(i):
     S.undo = None            # the undo offer is short-lived: it ends once the nurse moves on
 
 
-def go_board():
+def go_board(flt="all"):
     S.screen = "board"
+    S["filter"] = flt
 
 
 def pill(status, text=None):
@@ -245,9 +251,13 @@ model_status = backends.status()
 demo_models = model_status["rate"] == "demo" or model_status["bag"] == "demo"
 
 with st.sidebar:
-    st.markdown("### مراقبة المحلول")
-    st.caption("محطة التمريض")
-    st.button(f"لوحة الأسرّة · {alerts} تنبيه" if alerts else "لوحة الأسرّة", on_click=go_board, use_container_width=True)
+    st.markdown(f'<div class="brand">{APP_NAME}</div><div class="brand-sub">مراقبة المحلول الوريدي · محطة التمريض</div>',
+                unsafe_allow_html=True)
+    on_board = S.screen == "board"
+    st.button("لوحة الأسرّة", on_click=go_board, args=("all",), use_container_width=True,
+              type="primary" if on_board and S.get("filter") in (None, "all") else "secondary")
+    st.button(f"يحتاج تدخل · {alerts}", on_click=go_board, args=("alerts",), use_container_width=True,
+              type="primary" if on_board and S.get("filter") == "alerts" else "secondary")
     dot = lambda c: f'<span class="dot" style="background:{c}"></span>'
     st.markdown(f"""<div class="side-sum">
       <div class="head">ملخص الوردية</div>
@@ -261,6 +271,10 @@ with st.sidebar:
         why = "، ".join((gaps["rate"] if model_status["rate"] == "demo" else []) +
                        (gaps["bag"] if model_status["bag"] == "demo" else []))
         st.caption(f"⚠️ التحليل الجديد يعطي قيم تجريبية. الناقص: {why}")
+    with st.container(key="account"):
+        st.markdown(f"""<div class="account"><div class="avatar">{NURSE['initial']}</div>
+          <div><div class="who">{NURSE['name']}</div><div class="role">{NURSE['role']}</div></div></div>""",
+                    unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------- board
@@ -319,9 +333,10 @@ def board():
     # stable option values (the count is only in the shown text), so the choice survives a count change
     options = ["all", "alerts"]
     names = {"all": "الكل", "alerts": f"يحتاج تدخل · {alerts}"}
+    S.setdefault("filter", "all")       # also set by the side panel, so no default argument below
     if hasattr(st, "segmented_control"):
         # shown left-to-right (see CSS), so reverse the order to keep "الكل" on the right
-        flt = h2.segmented_control("تصفية", options[::-1], default="all", format_func=names.get, key="filter",
+        flt = h2.segmented_control("تصفية", options[::-1], format_func=names.get, key="filter",
                                    label_visibility="collapsed")
     else:
         flt = h2.radio("تصفية", options, format_func=names.get, horizontal=True, key="filter",

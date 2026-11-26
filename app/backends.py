@@ -28,6 +28,17 @@ for p in (DROP_DIR, BAG_DIR):
     if str(p) not in sys.path:
         sys.path.append(str(p))
 
+# EasyOCR downloads its models the first time it runs. Python from python.org on a Mac has no
+# certificate list, so that download fails with CERTIFICATE_VERIFY_FAILED: use certifi's list instead
+# (certifi is installed with ultralytics / requests).
+if sys.platform == "darwin":
+    try:
+        import certifi
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+    except ImportError:
+        pass
+
 MAX_SECONDS = float(os.environ.get("IV_MAX_SECONDS", 30))
 MAX_IMAGE_SIDE = 1280   # phone photos (4000 px) are shrunk first: OCR is ~3x faster and reads labels just as well
 
@@ -108,7 +119,11 @@ def missing():
         if not _has(lib):
             out["bag"].append(f"مكتبة {lib} مو منزّلة")
     if "bag" in _DISABLED:
-        out["bag"].append(f"موديل الكيس أو EasyOCR ما انحمّل ({_DISABLED['bag']})")
+        err = _DISABLED["bag"]
+        if "CERTIFICATE_VERIFY_FAILED" in err:
+            out["bag"].append("EasyOCR ما قدر ينزّل موديلاته (شهادات SSL في الماك): شغّلي python3 -m pip install --upgrade certifi ثم أعيدي تشغيل التطبيق")
+        else:
+            out["bag"].append(f"موديل الكيس أو EasyOCR ما انحمّل ({err})")
     return out
 
 
