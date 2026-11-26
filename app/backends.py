@@ -22,9 +22,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DROP_DIR = ROOT / "drop_detection"
 BAG_DIR = ROOT / "bag_label"
+# Added at the END of the search path: bag_label/ has its own copies of app.py, backends.py and
+# iv_logic.py, and those must not replace the app's files (Python takes the first match it finds).
 for p in (DROP_DIR, BAG_DIR):
     if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
+        sys.path.append(str(p))
 
 MAX_SECONDS = float(os.environ.get("IV_MAX_SECONDS", 30))
 
